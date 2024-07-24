@@ -6,6 +6,10 @@ from matplotlib.animation import FuncAnimation, writers
 from matplotlib.collections import LineCollection
 from tqdm import tqdm
 
+def scale_free_decay(x, t, step_size = 0.01, exponent = -3):
+    x *= (1 + step_size/(t+1))**(exponent)
+    return x
+
 
 class Domain:
     def __init__(self,
@@ -35,17 +39,20 @@ class Network:
     def __init__(self,
                  domain,
                  root_node = None,
-                 new_vein_distance = 0.1,
-                 birth_distance_v = 0.1,
-                 birth_distance_a = 0.1,
-                 kill_distance = 0.05,
-                 darts_per_step = 50,
+                 new_vein_distance = 0.05,
+                 birth_distance_v = 0.05,
+                 birth_distance_a = 0.05,
+                 kill_distance = 0.025,
+                 darts_per_step = 100,
                  start_size = 4,
-                 start_width = 2.5,
+                 start_width = 2.7,
                  colors = None,
+                 decay_type = "scale_free",
                  width_decay = 0.98,
                  distance_decay = 0.99,
-                 max_auxin_sources = 500,
+                 kill_decay = 0.995,
+                 max_auxin_sources = 300,
+                 source_drift = 0.04,
                  dim = 2):
         self.domain = domain
         self.darts_per_step = darts_per_step
@@ -56,8 +63,12 @@ class Network:
         self.birth_distance_v = birth_distance_v
         self.birth_distance_a = birth_distance_a
         self.kill_distance = kill_distance
+
+        self.decay_type = decay_type
         self.distance_decay = distance_decay
         self.width_decay = width_decay
+        self.kill_decay = kill_decay
+        self.source_drift = source_drift
 
         if root_node is None:
             root_node = np.zeros(dim)
@@ -118,25 +129,26 @@ class Network:
         new_vein_nodes = self.vein_nodes[unique_vein_indices] + auxin_pull * self.new_vein_distance
         # check if new nodes are within domain
         within = np.array([self.domain.within(node) for node in new_vein_nodes])
-        new_vein_nodes = new_vein_nodes[within]
+        if within.sum() > 0:
+            new_vein_nodes = new_vein_nodes[within]
 
-        # remove vein nodes that could not be generated
-        unique_vein_indices = unique_vein_indices[within]
+            # remove vein nodes that could not be generated
+            unique_vein_indices = unique_vein_indices[within]
 
-        new_colors = [self.colors[idx] for idx in unique_vein_indices]
-        new_widths = [self.widths[idx] * self.width_decay for idx in unique_vein_indices]
+            new_colors = [self.colors[idx] for idx in unique_vein_indices]
+            new_widths = [self.widths[idx] * self.width_decay for idx in unique_vein_indices]
 
-        new_edges = [Edge(idx,
-                          self.edge_count + i,
-                          age = self.current_step,
-                          color = new_colors[i],
-                          width = new_widths[i],
-                          ) for i, idx in enumerate(unique_vein_indices)]
-        self.colors += new_colors
-        self.widths += new_widths
-        self.edges += new_edges
-        self.edge_count += len(new_edges)
-        self.vein_nodes = np.concatenate([self.vein_nodes, new_vein_nodes])
+            new_edges = [Edge(idx,
+                            self.edge_count + i,
+                            age = self.current_step,
+                            color = new_colors[i],
+                            width = new_widths[i],
+                            ) for i, idx in enumerate(unique_vein_indices)]
+            self.colors += new_colors
+            self.widths += new_widths
+            self.edges += new_edges
+            self.edge_count += len(new_edges)
+            self.vein_nodes = np.concatenate([self.vein_nodes, new_vein_nodes])
         self.vein_tree = KDTree(self.vein_nodes)
 
     def _generate_auxin_sources(self):
@@ -155,15 +167,31 @@ class Network:
             if new_points:
                 new_points = np.array(new_points)
                 self.auxin_sources = np.concatenate([self.auxin_sources, new_points])
+        if self.source_drift > 0:
+            new_auxin_sources = np.random.randn(*self.auxin_sources.shape) * self.source_drift + self.auxin_sources.copy()
+            # check domain
+            within = np.array([self.domain.within(node) for node in new_auxin_sources])
+            if within.sum() > 0:
+                self.auxin_sources[within] = new_auxin_sources[within]
+
         # update this outside of loop cause removals
         self.auxin_tree = KDTree(self.auxin_sources)
 
     def _update_params(self):
-        if self.distance_decay is not None:
+        if self.decay_type == "exponential":
             self.new_vein_distance *= self.distance_decay
             self.birth_distance_v *= self.distance_decay
             self.birth_distance_a *= self.distance_decay
-            self.kill_distance *= self.distance_decay
+            self.source_drift *= self.distance_decay
+        elif self.decay_type == "scale_free":
+            self.new_vein_distance = scale_free_decay(self.new_vein_distance, self.current_step)
+            self.birth_distance_v = scale_free_decay(self.birth_distance_v, self.current_step)
+            self.birth_distance_a = scale_free_decay(self.birth_distance_a, self.current_step)
+
+            self.source_drift = scale_free_decay(self.source_drift, self.current_step)
+
+        # kill distance always decays exponentially
+        self.kill_distance *= self.kill_decay
 
 
     def step(self):
@@ -186,7 +214,7 @@ def plot_edges(edges,
                ax=None,
                background_color = "#061530",
                out_size = (30, 30),
-               alpha_scale = 0.995,
+               alpha_scale = 0.997,
                **kwargs):
 
     if ax is None:
@@ -212,11 +240,10 @@ def plot_edges(edges,
                         **kwargs)
     ax.add_collection(lc)
 
-    ax.set_xlim(points[:, 0].min() - 1, points[:, 0].max() + 1)
-    ax.set_ylim(points[:, 1].min() - 1, points[:, 1].max() + 1)
+    ax.set_xlim(points[:, 0].min() - 0.25, points[:, 0].max() + 0.25)
+    ax.set_ylim(points[:, 1].min() - 0.25, points[:, 1].max() + 0.25)
             
     ax.set_facecolor(background_color)
-    ax.set_aspect("equal")
     ax.axis("off")
 
     fig = plt.gcf()
@@ -275,7 +302,7 @@ def create_mp4_from_plot(edges, points, max_age=None, fps=30, filename='edge_ani
 
 if __name__ == "__main__":
     import os
-    n_steps = 300
+    n_steps = 1000
 
     os.makedirs("images", exist_ok=True)
     
@@ -305,4 +332,7 @@ if __name__ == "__main__":
         pbar.update()
 
     ax = plot_edges(net.edges, net.vein_nodes)
+    # create_mp4_from_plot(net.edges,
+    #                      net.vein_nodes,
+    #                      filename='images/hyphae.mp4')
 
