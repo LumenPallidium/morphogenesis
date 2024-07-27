@@ -1,12 +1,16 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import trimesh
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
-import matplotlib.pyplot as plt
+from scipy.interpolate import splprep, splev
+from shapely.geometry import Polygon
+from shapely.affinity import rotate
 from matplotlib.animation import FuncAnimation, writers
 from matplotlib.collections import LineCollection
 from tqdm import tqdm
 
-def scale_free_decay(x, t, step_size = 0.01, exponent = -3):
+def scale_free_decay(x, t, step_size = 0.01, exponent = -1.5):
     x *= (1 + step_size/(t+1))**(exponent)
     return x
 
@@ -275,14 +279,18 @@ def create_mp4_from_plot(edges, points, max_age=None, fps=30, filename='edge_ani
         max_age = max(edge.age for edge in edges)
     
     num_frames = max_age + 1  # +1 to include age 0
+
+    pbar = tqdm(range(num_frames))
     
-    def animate(frame):
+    def animate(frame, pbar = pbar):
         ax.clear()
         # Filter edges based on age
         edges_to_plot = [edge for edge in edges if edge.age <= frame]
         
         plot_edges(edges_to_plot, points, ax=ax, **plot_kwargs)
         ax.set_title(f"Edges Plot (Age <= {frame}, Frame {frame + 1}/{num_frames})")
+
+        pbar.update()
 
         return ax,
 
@@ -298,28 +306,178 @@ def create_mp4_from_plot(edges, points, max_age=None, fps=30, filename='edge_ani
     anim.save(filename, writer=writer)
     
     print(f"Animation saved as {filename}")
+    pbar.close()
 
+def create_cylinder(start, end, radius, upscale = 0.02):
+    """Create a cylinder between two points."""
+    vector = end - start
+    length = np.linalg.norm(vector) * (1 + upscale)
+    rotation = trimesh.geometry.align_vectors([0, 0, 1], vector)
+    cylinder = trimesh.creation.cylinder(radius=radius, height=length)
+    cylinder.apply_transform(rotation)
+    cylinder.apply_translation((start + end) / 2)
+    return cylinder
+
+def graph_to_3d_mesh(edges,
+                     points,
+                     width_scale=100,
+                     smoothing_iterations=10,
+                     lamb = 0.1,
+                     export_path=None):
+
+    edge_indices = np.array([(edge.source, edge.target) for edge in edges])
+    lines = points[edge_indices]
+    widths = [edge.width / width_scale for edge in edges]
+    meshes = []
+
+    print("Creating rough mesh...", end="")
+    pbar = tqdm(range(len(lines)))
+
+    for (start, end), radius in zip(lines, widths):
+        
+        cylinder = create_cylinder(start, end, radius)
+        meshes.append(cylinder)
+
+        sphere = trimesh.creation.uv_sphere(radius=radius, count=[10, 10])
+        sphere.apply_translation(start)
+        meshes.append(sphere)
+        
+        pbar.update()
+    
+    pbar.close()
+    
+    combined_mesh = trimesh.boolean.union(meshes,
+                                          check_volume=False,
+                                          engine="manifold")
+
+    print(" Done!\n Cleaning mesh...", end="")
+    combined_mesh.remove_unreferenced_vertices()
+    combined_mesh.process(validate=True)
+    
+    print(f" Done!\nSmoothing mesh for {smoothing_iterations} iterations...", end="")
+    # Apply Laplacian smoothing
+
+    if smoothing_iterations > 0:
+        combined_mesh = trimesh.smoothing.filter_laplacian(combined_mesh,
+                                                        lamb=lamb,
+                                                        iterations=smoothing_iterations)
+
+    print(" Done!\nNow exporting...")
+    if export_path is not None:
+        combined_mesh.export(export_path)
+    
+    return combined_mesh
+
+
+# domains TODO: maybe move to new file
+def circle2d(radius, center = None):
+    """The humble (filled) circle."""
+    #TODO : can i make a generic function for the n-sphere?
+    if center is None:
+        center = np.array([0, 0])
+    def within_domain(x):
+        return np.linalg.norm(x - center) < radius
+    def generate_in_domain(center = center):
+        r = np.random.rand() * radius
+        theta = np.random.rand() * 2 * np.pi
+        return np.array([r * np.cos(theta) + center[0],
+                         r * np.sin(theta) + center[1]])
+    return Domain(within_domain, generate_in_domain)
+
+def donut2d(outer_radius, inner_radius, center = None, force_void = False):
+    """
+    A 2D Donut domain.
+
+    By default, only generate points in the annulus between the inner and outer radii.
+    However, networs can still grow in the void/donut hole. force_void will force
+    the network to avoid the void when growing.
+    """
+    if center is None:
+        center = np.array([0, 0])
+    def within_domain(x):
+        in_outer = np.linalg.norm(x - center) < outer_radius
+        if force_void:
+            in_outer = in_outer and (np.linalg.norm(x - center) > inner_radius)
+        return in_outer
+    def generate_in_domain(center = center):
+        r = np.random.rand() * (outer_radius - inner_radius) + inner_radius
+        theta = np.random.rand() * 2 * np.pi
+        return np.array([r * np.cos(theta) + center[0],
+                         r * np.sin(theta) + center[1]])
+    return Domain(within_domain, generate_in_domain)
+
+
+def thick_paraboloid_cup(height, outer_radius, thickness, base_thickness, center=None):
+    """
+    (from Claude)
+    Create a thick paraboloid (cup-like shape) domain with volume.
+    
+    Parameters:
+    height (float): The height of the cup
+    outer_radius (float): The outer radius of the cup at its widest point (the top)
+    thickness (float): The thickness of the cup walls
+    base_thickness (float): The thickness of the cup's base
+    center (np.array): The center point of the base of the cup
+    """
+    if center is None:
+        center = np.array([0, 0, 0])
+    
+    inner_radius = outer_radius - thickness
+
+    def within_domain(x):
+        x_rel = x - center
+        r = np.sqrt(x_rel[0]**2 + x_rel[1]**2)
+        z = x_rel[2]
+        
+        # Check if point is within the height range
+        if z < 0 or z > height:
+            return False
+        
+        # Check if point is within the base
+        if z <= base_thickness:
+            return r <= outer_radius
+        
+        # Check if point is between the outer and inner paraboloids
+        outer_limit = outer_radius * (1 - (z-base_thickness)/(height-base_thickness))
+        inner_limit = inner_radius * (1 - (z-base_thickness)/(height-base_thickness))
+        return (r <= outer_limit) and (r >= inner_limit or z <= base_thickness)
+
+    def generate_in_domain():
+        while True:
+            # Decide whether to generate in the base or the walls
+            if np.random.random() < base_thickness / height:
+                # Generate in the base
+                z = np.random.uniform(0, base_thickness)
+                r = outer_radius * np.sqrt(np.random.random())
+            else:
+                # Generate in the walls
+                z = np.random.uniform(base_thickness, height)
+                max_r = outer_radius * (1 - (z-base_thickness)/(height-base_thickness))
+                min_r = inner_radius * (1 - (z-base_thickness)/(height-base_thickness))
+                r = np.random.uniform(min_r, max_r)
+            
+            theta = np.random.uniform(0, 2*np.pi)
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            
+            return np.array([x, y, z]) + center
+
+    return Domain(within_domain, generate_in_domain)
 
 if __name__ == "__main__":
     import os
-    n_steps = 1000
+    n_steps = 100
+    dim = 3
 
     os.makedirs("images", exist_ok=True)
     
-    # within domain is a function that returns True if the point is in the domain
-    within_domain = lambda x: (x**2).sum() < 25
-    # use polar coordinates to generate points
-    def generate_in_domain():
-        r = np.random.rand() * 5
-        theta = np.random.rand() * 2 * np.pi
-        return np.array([r * np.cos(theta), r * np.sin(theta)])
-    
-    domain = Domain(within_domain, generate_in_domain)
+    domain = thick_paraboloid_cup(4, 1.5, 0.2, 0.4)
 
     colors = ["#AF47D2", "#FF8F00", "#FFDB00", "#3AA6B9", "#FF9EAA"]
 
     net = Network(domain,
-                  colors = colors
+                  colors = colors,
+                  dim = dim,
                   )
     
     pbar = tqdm(range(n_steps))
@@ -331,7 +489,13 @@ if __name__ == "__main__":
         pbar.set_description(f"A: {auxin_sources} N: {nodes}")
         pbar.update()
 
-    ax = plot_edges(net.edges, net.vein_nodes)
+    pbar.close()
+
+    mesh = graph_to_3d_mesh(net.edges,
+                            net.vein_nodes,
+                            export_path="images/hyphae.obj")
+
+    #ax = plot_edges(net.edges, net.vein_nodes)
     # create_mp4_from_plot(net.edges,
     #                      net.vein_nodes,
     #                      filename='images/hyphae.mp4')
