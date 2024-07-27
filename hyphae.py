@@ -27,6 +27,20 @@ class Domain:
     
     def generate(self):
         return self.generate_func()
+    
+class TrimeshDomain(Domain):
+    def __init__(self, mesh_path):
+        trimesh_obj = trimesh.load(mesh_path)
+        self.mesh_path = mesh_path
+        self.trimesh_obj = trimesh_obj
+
+        def within_func(x):
+            return self.trimesh_obj.contains([x])[0]
+        
+        def generate_func():
+            sample = trimesh.sample.volume_mesh(self.trimesh_obj, 1)[0]
+            return sample
+        super().__init__(within_func, generate_func)
 
 class Edge:
     def __init__(self, source, target, age = 0, color = "#000000", width = 1):
