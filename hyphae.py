@@ -31,6 +31,7 @@ class Network:
                  new_vein_distance = 0.05,
                  birth_distance_v = 0.05,
                  birth_distance_a = 0.05,
+                 max_birth_distance_a = 1.0,
                  kill_distance = 0.1,
                  darts_per_step = 100,
                  start_size = 4,
@@ -51,6 +52,7 @@ class Network:
         self.new_vein_distance = new_vein_distance
         self.birth_distance_v = birth_distance_v
         self.birth_distance_a = birth_distance_a
+        self.max_birth_distance_a = max_birth_distance_a
         self.kill_distance = kill_distance
 
         self.decay_type = decay_type
@@ -106,7 +108,7 @@ class Network:
         auxin_sources = np.array(auxin_sources)
         return vein_nodes, auxin_sources
     
-    def _generate_new_veins(self):
+    def _generate_new_veins(self, max_tries = 10):
         # get the nearest vein node to each auxin source
         vein_dist, vein_indices = self.vein_tree.query(self.auxin_sources)
         diffs = self.auxin_sources - self.vein_nodes[vein_indices]
@@ -121,8 +123,9 @@ class Network:
 
         # new nodes are new_vein_distance away from indexed vein nodes
         new_vein_nodes = self.vein_nodes[unique_vein_indices] + auxin_pull * self.new_vein_distance
-        # check if new nodes are within domain
+        # check if new nodes are within domain, if not jitter them
         within = np.array([self.domain.within(node) for node in new_vein_nodes])
+
         if within.sum() > 0:
             new_vein_nodes = new_vein_nodes[within]
 
@@ -143,6 +146,7 @@ class Network:
             self.edges += new_edges
             self.edge_count += len(new_edges)
             self.vein_nodes = np.concatenate([self.vein_nodes, new_vein_nodes])
+
         self.vein_tree = KDTree(self.vein_nodes)
 
     def _generate_auxin_sources(self):
@@ -155,8 +159,10 @@ class Network:
                 vein_ball = self.vein_tree.query_ball_point(pos,
                                                             self.birth_distance_v)
                 auxin_ball = self.auxin_tree.query_ball_point(pos,
-                                                            self.birth_distance_a)
-                if len(vein_ball) == 0 and len(auxin_ball) == 0:
+                                                              self.birth_distance_a)
+                max_ball = self.vein_tree.query_ball_point(pos,
+                                                           self.max_birth_distance_a)
+                if (len(vein_ball) == 0) and (len(auxin_ball) == 0) and (len(max_ball) > 0):
                     new_points.append(pos)
             if new_points:
                 new_points = np.array(new_points)
@@ -293,7 +299,6 @@ def visual_hyperparameter_search(n_steps = 65,
             ax.set_title(f"{var} = {val}",
                          fontdict={"color" : "white"})
 
-
     pbar.close()
 
     plt.tight_layout()
@@ -429,7 +434,7 @@ def graph_to_3d_mesh(edges,
 
 if __name__ == "__main__":
     import os
-    n_steps = 300
+    n_steps = 150
     dim = 3
 
     os.makedirs("images", exist_ok=True)
@@ -465,7 +470,7 @@ if __name__ == "__main__":
     mesh = graph_to_3d_mesh(net.edges,
                             net.vein_nodes,
                             width_scale=40,
-                            smoothing_iterations=40,
+                            smoothing_iterations=20,
                             export_path="images/hyphae.obj"
                             )
 
