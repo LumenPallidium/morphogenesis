@@ -6,7 +6,6 @@ from scipy.spatial.distance import cdist
 from matplotlib.animation import FuncAnimation, writers
 from matplotlib.collections import LineCollection
 from tqdm import tqdm
-from domains import *
 
 def scale_free_decay(x, t, step_size = 0.01, exponent = -3.0):
     x *= (1 + step_size/(t+1))**(exponent)
@@ -47,6 +46,7 @@ class Network:
         self.domain = domain
         self.darts_per_step = darts_per_step
         self.start_size = start_size
+        self.start_width = start_width
         self.dim = dim
 
         self.new_vein_distance = new_vein_distance
@@ -61,29 +61,15 @@ class Network:
         self.kill_decay = kill_decay
         self.source_drift = source_drift
 
+        self.start_colors = colors
+
         if root_node is None:
             root_node = np.zeros(dim)
         self.root_node = root_node
         self.max_auxin_sources = max_auxin_sources
-        self.widths = [start_width] * (start_size + 1)
 
-        if colors is None:
-            colors = ["#000000"] * (start_size + 1)
-        self.colors = colors
+        self.reset()
 
-        self.vein_nodes, self.auxin_sources = self.initialize_network()
-        # enables fast querying
-        self.vein_tree = KDTree(self.vein_nodes)
-        self.auxin_tree = KDTree(self.auxin_sources)
-
-        self.current_step = 0
-        # initialize edges from root node to vein nodes
-        self.edges = [Edge(0,
-                           i,
-                           age = 0,
-                           color = colors[i-1],
-                           width = start_width) for i in range(1, len(self.vein_nodes) + 1)]
-        self.edge_count = len(self.edges)
 
     def initialize_network(self):
         vein_nodes = []
@@ -107,6 +93,36 @@ class Network:
                 auxin_sources.append(pos)
         auxin_sources = np.array(auxin_sources)
         return vein_nodes, auxin_sources
+    
+    def reset(self, **kwargs):
+        # just in case we want to reset some parameters
+        for name, value in kwargs.items():
+            if hasattr(self, name):
+                setattr(self, name, value)
+            else:
+                raise ValueError(f"Invalid parameter {name}.")
+
+        self.widths = [self.start_width] * (self.start_size + 1)
+
+        if self.start_colors is None:
+            colors = ["#000000"] * (self.start_size + 1)
+        else:
+            colors = self.start_colors
+        self.colors = colors
+
+        self.vein_nodes, self.auxin_sources = self.initialize_network()
+        # enables fast querying
+        self.vein_tree = KDTree(self.vein_nodes)
+        self.auxin_tree = KDTree(self.auxin_sources)
+
+        self.current_step = 0
+        # initialize edges from root node to vein nodes
+        self.edges = [Edge(0,
+                           i,
+                           age = 0,
+                           color = colors[i-1],
+                           width = self.start_width) for i in range(1, len(self.vein_nodes) + 1)]
+        self.edge_count = len(self.edges)
     
     def _generate_new_veins(self, max_tries = 10):
         # get the nearest vein node to each auxin source
@@ -251,7 +267,7 @@ def plot_edges(edges,
     fig.set_size_inches(out_size)
     fig.patch.set_facecolor(background_color)
     if export:
-        fig.savefig("images/hyphae.png", dpi=300)
+        fig.savefig("../images/hyphae.png", dpi=300)
        
     return ax
 
@@ -302,7 +318,7 @@ def visual_hyperparameter_search(n_steps = 65,
     pbar.close()
 
     plt.tight_layout()
-    plt.savefig("images/hyperparameter_search.png", dpi=300)
+    plt.savefig("../images/hyperparameter_search.png", dpi=300)
 
 
 def create_mp4_from_plot(edges, points, max_age=None, fps=30, filename='edge_animation.mp4', **plot_kwargs):
@@ -434,14 +450,15 @@ def graph_to_3d_mesh(edges,
 
 if __name__ == "__main__":
     import os
+    from domains import *
     n_steps = 150
     dim = 3
 
-    os.makedirs("images", exist_ok=True)
+    os.makedirs("../images", exist_ok=True)
     
     # domain = thick_cylinder_cup(4, 1.5, 0.3, 0.4,
     #                             center = np.array([0, 0, -0.1]))
-    # domain = TrimeshDomain("data/chalice.stl")
+    # domain = TrimeshDomain("../data/chalice.stl")
     # params = domain.get_natural_scales()
     # domain = thick_triangular_base(3, 2, 4, 1)
     # domain = circle2d(4)
@@ -467,14 +484,14 @@ if __name__ == "__main__":
 
     pbar.close()
 
-    mesh = graph_to_3d_mesh(net.edges,
-                            net.vein_nodes,
-                            width_scale=40,
-                            smoothing_iterations=20,
-                            export_path="images/hyphae.obj"
-                            )
+    # mesh = graph_to_3d_mesh(net.edges,
+    #                         net.vein_nodes,
+    #                         width_scale=40,
+    #                         smoothing_iterations=20,
+    #                         export_path="../images/hyphae.obj"
+    #                         )
 
     # ax = plot_edges(net.edges, net.vein_nodes)
     # create_mp4_from_plot(net.edges,
     #                      net.vein_nodes,
-    #                      filename='images/hyphae.mp4')
+    #                      filename='../images/hyphae.mp4')

@@ -252,3 +252,46 @@ def thick_cut_ellipsoid(height, base_radius, max_radius, thickness, center=None)
         return np.array([x, y, z]) + center
 
     return Domain(within_domain, generate_in_domain)
+
+domain_lookup_2d = {
+    "circle2d" : {"function" : circle2d,
+                  "parameters" : {"radius" : {"type" : "float",
+                                              "default" : 4}}},
+    "donut2d" : {"function" : donut2d,
+                 "parameters" : {"outer_radius" : {"type" : "float",
+                                                    "default" : 4},
+                                 "inner_radius" : {"type" : "float",
+                                                    "default" : 2},
+                                 "force_void" : {"type" : "bool",
+                                                 "default" : True},}}
+}
+
+domain_lookup_3d = {
+    "thick_cylinder_cup" : {"function" : thick_cylinder_cup,
+                            "parameters" : {"height" : {"type" : "float",
+                                                        "default" : 4},
+                                            "outer_radius" : {"type" : "float",
+                                                              "default" : 4},
+                                            "thickness" : {"type" : "float",
+                                                           "default" : 0.5},
+                                            "base_thickness" : {"type" : "float",
+                                                                "default" : 1}}},
+    "thick_triangular_base" : {"function" : thick_triangular_base,
+                               "parameters" : {"height" : {"type" : "float",
+                                                           "default" : 4},
+                                               "top_inner_width" : {"type" : "float",
+                                                                    "default" : 4},
+                                               "bottom_inner_width" : {"type" : "float",
+                                                                       "default" : 2},
+                                               "wall_thickness" : {"type" : "float",
+                                                                   "default" : 0.5}}},
+    "thick_cut_ellipsoid" : {"function" : thick_cut_ellipsoid,
+                             "parameters" : {"height" : {"type" : "float",
+                                                         "default" : 4},
+                                             "base_radius" : {"type" : "float",
+                                                              "default" : 1.5},
+                                             "max_radius" : {"type" : "float",
+                                                             "default" : 2.5},
+                                             "thickness" : {"type" : "float",
+                                                            "default" : 0.3}}},
+}
