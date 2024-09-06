@@ -23,7 +23,7 @@ body, html {
 
 .dashboard-container {
     display: flex;
-    height: 100vh;
+    height: 800vh;
 }
 
 .header {
@@ -68,11 +68,23 @@ body, html {
 }
 
 .card {
-    background-color: var(--card-bg);
-    border-radius: 15px;
+    background-color: var(--card-bg);;
+    border-radius: 8px;
     padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     margin-bottom: 20px;
-    backdrop-filter: blur(10px);
+    height: calc(100vh - 300px);  /* Adjust this value as needed */
+    min-height: 400px;  /* Set a minimum height */
+    display: flex;
+    flex-direction: column;
+}
+
+.card h2 {
+    margin-top: 0;
+}
+
+#main-chart {
+    flex-grow: 1;  /* Allow the chart to grow and fill available space */
 }
 
 .sidebar {
